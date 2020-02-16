@@ -1,0 +1,109 @@
+#!/bin/bash
+
+readonly PROGNAME=$(basename $0)
+readonly PROGDIR=`pwd`
+readonly ARGS="$@"
+
+usage() {
+	cat <<EOF
+usage: $PROGNAME [options]
+Invalidates a Cloudfront distribution
+
+This command uses aws-cli and requires to be authenticated using environment variables
+
+The authenticated profile must be able to create an invalidation and get and invalidation
+
+OPTIONS:
+	-d			Id of the distribution to invalidate
+	-h			Shows this message
+EOF
+}
+
+cmdline() {
+	local distribution_id
+	local arg=$ARGS
+
+	eval set -- $arg
+
+	while getopts "hd:" OPTION
+	do
+		case $OPTION in
+		h)
+			usage
+			exit 0
+			;;
+		d)
+			distribution_id=$OPTARG
+			;;
+		esac
+	done
+
+	if [[ -z "$distribution_id" ]]; then
+		echo "Distribution id (-d) option is required"
+		echo
+		usage
+		exit 1
+	fi
+
+	readonly DISTRIBUTION_ID=${distribution_id}
+
+	return 0
+}
+
+create_invalidation() {
+	local distribution_id=$1
+	local paths=$2
+
+	aws cloudfront create-invalidation --distribution-id ${distribution_id} --paths "$paths" | jq -r .Invalidation.Id
+}
+
+# Can return "InProgress" or "Completed"
+invalidation_status() {
+	local distribution_id=$1
+	local invalidation_id=$2
+
+	aws cloudfront get-invalidation --distribution-id ${distribution_id} --id ${invalidation_id} | jq -r .Invalidation.Status
+}
+
+invalidate() {
+	local distribution_id=$1
+	local paths="$2"
+
+	local invalidation_id=$(create_invalidation ${distribution_id} "$paths")
+
+	if [[ -z "$invalidation_id" ]]; then
+		echo "Unable to create invalidation"
+		exit 1
+	fi
+
+	local timeout_count=90
+	local i=0
+	local sleep_time=10
+
+	while [[ $(invalidation_status ${distribution_id} ${invalidation_id}) == "InProgress" ]]
+	do
+		((i=i+1))
+
+		if [[ ${i} -gt ${timeout_count} ]]; then
+			echo "Timeout while waiting for invalidation status to complete"
+			exit 1
+		fi
+
+		echo -n "."
+		sleep ${sleep_time}
+
+	done
+}
+
+main() {
+
+	cmdline
+
+	echo "Invalidation of distribution ID $DISTRIBUTION_ID"
+	echo "Will check every 10 seconds to confirm the invalidation status is completed"
+
+	invalidate ${DISTRIBUTION_ID} "/*"
+
+}
+
+main
