@@ -12,4 +12,4 @@ RUN aws --version
 COPY invalidate .
 RUN chmod +x invalidate
 
-ENTRYPOINT ["/bin/bash", "-x", "./invalidate"]
+ENTRYPOINT ["/bin/bash", "./invalidate"]
